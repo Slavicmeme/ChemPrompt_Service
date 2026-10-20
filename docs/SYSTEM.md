@@ -1,6 +1,6 @@
 # ChemPrompt 시스템 구조와 권한
 
-- 서비스 내부 동작(구성, 예측·학습 흐름, 저장소, DB, workflow, Agent)과 사용자/운영자 권한을 정리한 문서임
+- 서비스 내부 동작(구성, 예측·학습 흐름, 저장소, DB, workflow, Agent)과 사용자/운영자 권한을 정리한 문서
 - 설치와 운영은 [README](../README.md), 사용법은 [USER_GUIDE.md](USER_GUIDE.md) 참고
 
 ## 목차
@@ -24,10 +24,10 @@
                              └─▶ OpenAI Responses API (Agent) / Langfuse (선택)
      init 컨테이너 (실행 때마다 1회): SQL 적용 → 관리자 생성 → built-in 모델 학습
 ```
-- 과학 로직(descriptor, prompt, 분할, Top-50 선택, GA, sklearn 모델, 지표)은 모두 원본 ChemPrompt 코드(`backend/chemprompt_core`)를 그대로 불러 씀
-- Aya는 embedding 전용이고 대화용 Agent가 아님, Agent는 OpenAI 모델이 맡음
-- sklearn 학습/예측은 CPU에서 돌고 GPU는 Aya에만 씀
-- Aya는 `.env`의 `AYA_GPUS`(예: `0,1`)에 적은 GPU만 쓰고, GPU마다 모델을 하나씩 올려 요청을 나눠 처리함, 모델 파일은 `<DATA_DIR>/llm`에 없으면 처음 시작할 때 내려받음
+- 과학 로직(descriptor, prompt, 분할, Top-50 선택, GA, sklearn 모델, 지표)은 모두 원본 ChemPrompt 코드(`backend/chemprompt_core`)를 그대로 불러 사용
+- Aya는 embedding 전용이고 대화용 Agent와 별개, Agent는 OpenAI 모델 담당
+- sklearn 학습/예측은 CPU에서 실행, GPU는 Aya 전용
+- Aya는 `.env`의 `AYA_GPUS`(예: `0,1`)에 적은 GPU만 사용, GPU마다 모델을 하나씩 올려 요청 분산 처리, 모델 파일은 `<DATA_DIR>/llm`에 없으면 첫 시작 때 다운로드
 
 ### 1.2 예측 흐름
 ```
@@ -38,7 +38,7 @@ SMILES → RDKit 검증 → 모델에 저장된 descriptor 목록으로 descript
        → 회귀: 평균 / 분류: 확률 평균 후 0.5 기준 판정
        → 예측 기록 저장 (모델 버전, 분할 방식, seed, descriptor 방식, representation, prompt 버전)
 ```
-- descriptor 선택이 같은 모델들은 embedding을 한 번만 계산함 (FULL이면 1회)
+- descriptor 선택이 같은 모델들은 embedding 1회만 계산 (FULL이면 1회)
 
 ### 1.3 학습 흐름
 | 단계 | 내용 | workflow 단계 |
@@ -51,18 +51,18 @@ SMILES → RDKit 검증 → 모델에 저장된 descriptor 목록으로 descript
 | ⑥ 학습 | Model k를 자기 학습용 80%로 fit (Ridge / LogisticRegression / MultiOutputClassifier) | 8 |
 | ⑦ 평가 | Model k를 자기 검증용 20%로 평가, 원래 단위 | 9 |
 | ⑧ 등록 | 파일 저장 → metadata.json → 자동 검증 → READY | 10 |
-- 검증용 20%는 descriptor 선택, GA, 학습에 절대 쓰지 않음 (leakage 방지)
-- 각 단계 사이와 embedding 묶음 사이마다 중단 요청을 확인함
+- 검증용 20%는 descriptor 선택, GA, 학습에 절대 미사용 (leakage 방지)
+- 각 단계 사이와 embedding 묶음 사이마다 중단 요청 확인
 
 ### 1.4 데이터 분할과 seed
-- RANDOM: KFold(분류는 StratifiedKFold), seed 42, Model 1~5의 검증 데이터가 서로 겹치지 않음
-- SCAFFOLD: 원본 규칙 `42 + i`(기존 3개: 42, 43, 44)를 5개로 확장한 **[42, 43, 44, 45, 46]**, 모델마다 독립적인 scaffold-balanced 80/20 분할 (같은 골격이 학습과 검증에 동시에 들어가지 않음)
-- 분할 설정, seed, 분할 결과(+checksum)는 `split_configs`, `split_fold_assignments`, 모델 `metadata.json`, 예측 기록에 저장됨
-- 같은 데이터셋 + 같은 설정이면 같은 분할이 재현됨
+- RANDOM: KFold(분류는 StratifiedKFold), seed 42, Model 1~5의 검증 데이터 중복 없음
+- SCAFFOLD: 원본 규칙 `42 + i`(기존 3개: 42, 43, 44)를 5개로 확장한 **[42, 43, 44, 45, 46]**, 모델마다 독립적인 scaffold-balanced 80/20 분할 (같은 골격이 학습과 검증에 동시에 포함되지 않음)
+- 분할 설정, seed, 분할 결과(+checksum)는 `split_configs`, `split_fold_assignments`, 모델 `metadata.json`, 예측 기록에 저장
+- 같은 데이터셋 + 같은 설정이면 같은 분할 재현
 
 ### 1.5 Representation 캐시
 - 캐시 키: 데이터셋 checksum + representation 모델 + prompt 버전 + descriptor 방식 + descriptor 선택(flag) + 전처리 버전
-- mock과 Aya는 키가 달라 섞이지 않음
+- mock과 Aya는 키가 달라 혼용 없음
 
 ### 1.6 모델 레지스트리와 상태
 ```
@@ -71,8 +71,8 @@ UPLOADED → VALIDATING → READY → SERVING → ARCHIVED
 ```
 - 자동 검증: checksum, 5개 모델 로드, descriptor 복원, representation 일치, 시험 예측(CCO)
 - READY: 본인(및 Admin)만 예측에 사용
-- SERVING: Admin 승인, 모든 사용자가 사용 (같은 논리 모델 안에서 SERVING은 1개, 새로 승인하면 기존 SERVING은 READY로 내려감)
-- ARCHIVED: 예측에 쓰지 않음
+- SERVING: Admin 승인, 모든 사용자가 사용 (같은 논리 모델 안에서 SERVING은 1개, 새로 승인하면 기존 SERVING은 READY로 강등)
+- ARCHIVED: 예측 미사용
 
 ### 1.7 저장소 구조 (`<DATA_DIR>/storage`)
 ```
@@ -86,8 +86,8 @@ builtin/
 users/{user_id}/
   datasets/..., representations/..., models/{model_id}/{version}/...
 ```
-- 경로는 서버가 정함, 사용자/Admin이 파일 경로를 입력하는 기능은 없음
-- DB에는 경로(key), checksum, 소유자, fold 번호가 기록되고 불러올 때 checksum을 확인함
+- 경로는 서버가 결정, 사용자/Admin의 파일 경로 입력 기능 없음
+- DB에는 경로(key), checksum, 소유자, fold 번호 기록, 불러올 때 checksum 확인
 
 ### 1.8 DB (`sql/001`~`010`, 순번 적용, 재실행 안전)
 | 파일 | 내용 |
@@ -104,22 +104,22 @@ users/{user_id}/
 | 010 | 학습 중단 상태(CANCELLED) |
 
 ### 1.9 Workflow 엔진
-- PostgreSQL의 workflow 상태가 기준임, `current_step = N`이면 1~N단계가 완료된 것임
-- N+1단계만 실행할 수 있고, 건너뛰면 409로 거부함 (Agent도 동일)
-- 단계 결과 저장과 `current_step` 변경은 한 transaction으로 처리함 (workflow 행 잠금)
-- 진행 상황 화면은 DB에 기록된 실제 단계만 SSE로 전달함 (가짜 진행률 없음)
+- PostgreSQL의 workflow 상태가 기준, `current_step = N`이면 1~N단계 완료 상태
+- N+1단계만 실행 가능, 건너뛰면 409로 거부 (Agent도 동일)
+- 단계 결과 저장과 `current_step` 변경은 한 transaction으로 처리 (workflow 행 잠금)
+- 진행 상황 화면은 DB에 기록된 실제 단계만 SSE로 전달 (가짜 진행률 없음)
 
 ### 1.10 Agent
 - LangGraph: `agent`(OpenAI 호출, 스트리밍) ⇄ `tools`(tool 실행) 반복, 최대 6회
 - OpenAI Responses API 사용, reasoning 모델은 `OPENAI_REASONING_EFFORT` 적용
 - tool: `list_properties`, `get_property_info`, `predict_property`, `get_prediction_result`, `get_prediction_history`, `get_training_status`, `get_workflow_status`
-- tool은 요청한 사용자 권한으로 실행됨 (다른 사용자 데이터 접근 불가)
-- 대화와 tool 결과는 DB(`agent_messages`)에 저장됨
-- Langfuse는 key가 있을 때만 켜지고, 장애가 나도 예측/학습에 영향 없음
+- tool은 요청한 사용자 권한으로 실행 (다른 사용자 데이터 접근 불가)
+- 대화와 tool 결과는 DB(`agent_messages`)에 저장
+- Langfuse는 key가 있을 때만 활성, 장애 시에도 예측/학습에 영향 없음
 
 ### 1.11 과학 로직 재사용 (`backend/chemprompt_core`)
-- 원본 ChemPrompt 연구 코드(`Slavicmeme/Chemprompt`, MIT License, Copyright (c) 2026 APC Lab) 중 서비스가 쓰는 파일만 옮긴 패키지임
-- 과학 로직은 원본 그대로이고 import 경로만 바뀜, 라이선스는 `backend/chemprompt_core/LICENSE`
+- 원본 ChemPrompt 연구 코드(`Slavicmeme/Chemprompt`, MIT License, Copyright (c) 2026 APC Lab) 중 서비스가 쓰는 파일만 옮긴 패키지
+- 과학 로직은 원본 그대로, import 경로만 변경, 라이선스는 `backend/chemprompt_core/LICENSE`
 
 | 모듈 | 원본 파일 | 쓰는 곳 |
 |---|---|---|
@@ -140,7 +140,7 @@ sql/                     001~010 PostgreSQL DDL
 backend/app/             FastAPI (routers/, services/, agent/, models.py, config.py)
 backend/chemprompt_core/ 원본 ChemPrompt 핵심 모듈 (MIT)
 backend/scripts/         apply_sql, create_admin, bootstrap_builtin, reset_builtin, reset_user_data, docker_init
-backend/tests/           pytest 17개
+backend/tests/           pytest 19개
 aya_service/             GPU Aya Representation 서비스
 frontend/                정적 화면 (vendor/: marked, DOMPurify)
 sample/hppb.csv          Custom 학습 예시 데이터
@@ -151,7 +151,7 @@ nginx/nginx.conf         Docker의 nginx 설정
 ```
 
 ### 1.13 개발 기준 (원본 명세 요약)
-- 과학 로직은 원본 `Slavicmeme/Chemprompt` 코드를 재사용하고(`backend/chemprompt_core`) 임의로 재작성하지 않음
+- 과학 로직은 원본 `Slavicmeme/Chemprompt` 코드를 재사용(`backend/chemprompt_core`), 임의 재작성 금지
 - 스택: FastAPI + PostgreSQL + SQLAlchemy 2.x (스키마는 `sql/*.sql`), Static HTML/CSS/JS, OpenAI Agent + LangGraph, Langfuse, SSE
 - Aya는 representation 전용, GPU 서버에서 분리 serving, sklearn은 CPU에서도 실행 가능
 - Full / Feature Selection Top-50 / Genetic 지원, Genetic V1은 mock 가능하되 실제 GA로 교체 가능한 구조
@@ -160,15 +160,13 @@ nginx/nginx.conf         Docker의 nginx 설정
 
 ---
 
----
-
 ## 2. 사용자 권한과 운영자 권한
 
 ### 2.1 역할
-- **비로그인**: 로그인/회원가입 화면만 볼 수 있음
-- **USER**: 회원가입하면 자동으로 USER가 됨
-- **ADMIN**: 웹에서 가입하거나 승격할 수 없음, 서버에서 `bin/compose.sh exec api chemprompt scripts.create_admin <이름>`으로만 만들거나 승격함
-- 권한은 모든 요청마다 서버에서 확인함 (화면에서 버튼을 숨기는 것과 별개로 API가 403/404로 막음)
+- **비로그인**: 로그인/회원가입 화면만 접근 가능
+- **USER**: 회원가입 시 자동으로 USER
+- **ADMIN**: 웹에서 가입·승격 불가, 서버에서 `bin/compose.sh exec api chemprompt scripts.create_admin <이름>`으로만 생성·승격
+- 권한은 모든 요청마다 서버에서 확인 (화면의 버튼 숨김과 별개로 API가 403/404로 차단)
 
 ### 2.2 기능별 권한
 | 기능 | USER | ADMIN |
@@ -180,7 +178,7 @@ nginx/nginx.conf         Docker의 nginx 설정
 | 예측 기록 보기 | 본인 기록만 | 본인 기록 + API로 다른 사용자 예측 상세 조회 |
 | Custom 학습 (workflow 생성·진행) | O (본인 것만) | O |
 | 학습 중단 | 본인 workflow | 모든 학습 작업 (built-in 포함, Admin 화면) |
-| Workflow 삭제 | 본인 것, 진행 중이 아닐 때 | 본인 것 (API로는 다른 사용자 것도 가능, 화면 목록에는 본인 것만 나옴) |
+| Workflow 삭제 | 본인 것, 진행 중이 아닐 때 | 본인 것 (API로는 다른 사용자 것도 가능, 화면 목록에는 본인 것만 표시) |
 | 내 모델 삭제 | 본인 모델, SERVING이 아닐 때 | 본인 모델 |
 | 모델 검증 / 승인·Serving / Archive | X | O |
 | 모델 패키지 업로드 | X | O |
@@ -193,13 +191,13 @@ nginx/nginx.conf         Docker의 nginx 설정
 |---|---|
 | READY | 모델 소유자, ADMIN |
 | SERVING | 모든 로그인 사용자 |
-| UPLOADED / VALIDATING / INVALID / ARCHIVED | 아무도 쓸 수 없음 |
+| UPLOADED / VALIDATING / INVALID / ARCHIVED | 사용 불가 |
 
 ### 2.4 보안
-- 비밀번호는 Argon2id 해시로만 저장함
-- 로그인 세션은 서버 DB에 저장되는 무작위 토큰이고, 브라우저에는 HttpOnly cookie로만 전달됨 (JavaScript에서 읽을 수 없음), 유효기간 24시간
-- `SECRET_KEY`를 설정하면 세션 토큰 해시에 함께 쓰임
-- OpenAI / Langfuse key는 서버 `.env`에만 있고 브라우저로 전달되지 않음
-- Agent 답변(Markdown)은 DOMPurify로 위험한 HTML/스크립트를 제거한 뒤 표시함
-- 사용자/Admin 모두 서버 파일 경로를 지정할 수 없음, 업로드 zip도 허용된 파일 이름만 받음
-- 모델 파일은 불러올 때마다 checksum을 확인함
+- 비밀번호는 Argon2id 해시로만 저장
+- 로그인 세션은 서버 DB에 저장되는 무작위 토큰, 브라우저에는 HttpOnly cookie로만 전달 (JavaScript에서 읽기 불가), 유효기간 24시간
+- `SECRET_KEY`를 설정하면 세션 토큰 해시에 함께 사용
+- OpenAI / Langfuse key는 서버 `.env`에만 보관, 브라우저로 미전달
+- Agent 답변(Markdown)은 DOMPurify로 위험한 HTML/스크립트를 제거한 뒤 표시
+- 사용자/Admin 모두 서버 파일 경로 지정 불가, 업로드 zip도 허용된 파일 이름만 허용
+- 모델 파일은 불러올 때마다 checksum 확인
