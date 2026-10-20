@@ -1,0 +1,29 @@
+.env
+HANDOVER.md
+skill.md
+
+# created by bin/compose.sh / Docker at run time: DATA_DIR (default ./data → postgres/, storage/, llm/)
+data/
+
+# trained ML models / embeddings (built-in 4 + custom), wherever DATA_DIR points
+builtin/
+*.joblib
+*.pkl
+*.npy
+*.npz
+*.safetensors
+*.pt
+
+# GPU override written by bin/compose.sh (normally in /tmp, removed on exit; covers TMPDIR inside the project)
+chemprompt-gpu.*.yml
+
+# old local runtime data / logs
+storage/
+storage_orphan_*/
+run/
+hf_cache/
+
+# Python / test cache (created by the containers on the mounted code or by local runs)
+__pycache__/
+*.pyc
+.pytest_cache/
