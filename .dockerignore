@@ -1,0 +1,12 @@
+.git
+.env
+storage/
+storage_orphan_*/
+run/
+hf_cache/
+**/__pycache__
+**/*.pyc
+frontend/
+docs/
+sample/
+data/

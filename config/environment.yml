@@ -1,0 +1,47 @@
+# ChemPrompt Web Service — Python environment of the Docker image (docker/Dockerfile installs it with micromamba)
+# Versions pinned to what the service was verified with.
+# Scientific stack = the original ChemPrompt research environment, so saved joblib models stay compatible.
+name: chemprompt_service
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10.20
+  - pip
+  - numpy=1.26.4
+  - pandas=2.1.4
+  - rdkit=2023.09.6
+  - pytorch=2.5.1          # conda-forge CUDA build (Aya service on GPU; CPU import for chemprop on the web side)
+  - cuda-version=12.1
+  - libstdcxx              # GLIBCXX_3.4.31 required by rdkit/boost
+  - pip:
+      # --- scientific (same as research env) ---
+      - scikit-learn==1.7.2
+      - scipy==1.15.3
+      - joblib==1.5.3
+      - chemprop==1.6.1
+      - transformers==4.56.2
+      - tokenizers==0.22.2
+      - safetensors==0.8.0
+      - huggingface-hub==0.36.2
+      - accelerate==0.33.0
+      - tqdm==4.68.4
+      # --- built-in dataset bootstrap (original Chemprompt DataLoader) ---
+      - deepchem==2.8.0
+      # PyTDC is NOT installed: PyTDC 1.1.15 requires transformers<4.51 (conflicts with 4.56.2).
+      # DataLoader only uses it for Caco2_Wang, which is not a service property;
+      # scripts/bootstrap_builtin.py stubs the import when PyTDC is absent.
+      # --- web / API ---
+      - fastapi==0.143.2
+      - uvicorn[standard]==0.54.0
+      - SQLAlchemy==2.0.51
+      - psycopg[binary]==3.3.6
+      - argon2-cffi==25.1.0
+      - python-multipart==0.0.32
+      - httpx==0.28.1
+      - pydantic==2.13.4
+      # --- agent / observability ---
+      - openai==3.31.0
+      - langgraph==1.2.15
+      - langfuse==4.18.0
+      # --- tests ---
+      - pytest==9.1.1

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChemPrompt</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <header class="topbar" id="topbar" hidden>
+    <a class="brand" href="#/predict"><span class="brand-mark">⌬</span> ChemPrompt</a>
+    <nav class="nav" id="nav">
+      <a href="#/predict" data-route="predict">예측</a>
+      <a href="#/agent" data-route="agent">Agent</a>
+      <a href="#/training" data-route="training">Custom 학습</a>
+      <a href="#/history" data-route="history">기록</a>
+      <a href="#/admin" data-route="admin" id="nav-admin" hidden>Admin</a>
+    </nav>
+    <div class="user-box">
+      <span id="user-name"></span>
+      <button class="btn ghost sm" id="logout-btn">로그아웃</button>
+    </div>
+  </header>
+  <main id="view" class="view"></main>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/pages/auth.js"></script>
+  <script src="/js/pages/predict.js"></script>
+  <script src="/js/pages/agent.js"></script>
+  <script src="/js/pages/training.js"></script>
+  <script src="/js/pages/history.js"></script>
+  <script src="/js/pages/admin.js"></script>
+</body>
+</html>

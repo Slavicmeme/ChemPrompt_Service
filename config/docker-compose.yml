@@ -1,0 +1,120 @@
+# ChemPrompt Web Service — Docker compose (no host conda / PostgreSQL needed)
+#
+# Run through the wrapper (project root = paths and .env base):
+#   bin/compose.sh up -d --build          db → init(SQL, 관리자, built-in 학습) → api → nginx
+#   aya(GPU, AYA_GPUS)도 자동으로 함께 뜸 (기본 REPRESENTATION_MODE=http, NVIDIA Container Toolkit 필요)
+#
+# .env (필수)
+#   DATA_DIR                      데이터 저장 호스트 폴더 → ${DATA_DIR}/postgres (DB), ${DATA_DIR}/storage (모델·데이터셋),
+#                                 ${DATA_DIR}/llm (Aya LLM 파일)
+#   WEB_HOST, WEB_PORT            외부 접속: 호스트 IP:포트 → nginx :80 → api :8000
+#   POSTGRES_USER/PASSWORD/DB     compose 안의 PostgreSQL 계정 (db 생성과 api/init 접속에 같이 쓰임)
+# 나머지 설정은 아래 기본값을 쓰고, 바꾸려면 같은 이름으로 .env에 추가함
+name: chemprompt
+
+x-app-env: &app-env
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  POSTGRES_DB: ${POSTGRES_DB:-chemprompt}
+  MODEL_STORAGE_ROOT: /data/storage
+  SECRET_KEY: ${SECRET_KEY:-}
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+  BUILTIN_DESCRIPTOR_MODE: ${BUILTIN_DESCRIPTOR_MODE:-FULL}
+  BUILTIN_SPLIT: ${BUILTIN_SPLIT:-RANDOM}
+  REPRESENTATION_MODE: ${REPRESENTATION_MODE:-http}
+  REPRESENTATION_SERVICE_URL: http://aya:8100
+  AYA_MODEL_ID: ${AYA_MODEL_ID:-CohereLabs/aya-expanse-8b}
+  GA_MODE: ${GA_MODE:-genetic}
+  TRAINING_WORKERS: ${TRAINING_WORKERS:-2}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_AGENT_MODEL: ${OPENAI_AGENT_MODEL:-gpt-4o-mini}
+  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+
+x-app: &app
+  image: chemprompt-service:latest
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  environment: *app-env
+  volumes:
+    - ${DATA_DIR:-./data}/storage:/data/storage
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-chemprompt}
+    volumes:
+      - ${DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # one-shot: apply sql/*.sql, create admin (ADMIN_PASSWORD), train missing built-in models
+  init:
+    <<: *app
+    command: ["python", "-m", "scripts.docker_init"]
+    depends_on:
+      db:
+        condition: service_healthy
+      aya:                       # only when REPRESENTATION_MODE=http (gpu profile); built-ins need its embeddings
+        condition: service_healthy
+        required: false
+    restart: "no"
+
+  api:
+    <<: *app
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/opt/conda/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      retries: 30
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${WEB_HOST:-0.0.0.0}:${WEB_PORT:-8889}:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Aya representation — internal only (http://aya:8100), never published.
+  # Started automatically by bin/compose.sh when REPRESENTATION_MODE=http (default); bin/compose.sh also attaches the
+  # GPUs listed in AYA_GPUS (generated override, one model replica per GPU). Needs NVIDIA Container Toolkit.
+  aya:
+    <<: *app
+    profiles: ["gpu"]
+    working_dir: /app/aya_service
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8100"]
+    environment:
+      <<: *app-env
+      AYA_DTYPE: ${AYA_DTYPE:-float16}
+      HF_HOME: /data/llm                     # model files: <DATA_DIR>/llm (downloaded on first start)
+      HF_TOKEN: ${HF_TOKEN:-}                # Aya is a gated model on Hugging Face
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    volumes:
+      - ${DATA_DIR:-./data}/storage:/data/storage
+      - ${DATA_DIR:-./data}/llm:/data/llm
+    healthcheck:
+      test: ["CMD", "/opt/conda/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health')"]
+      interval: 30s
+      retries: 10
+      start_period: 2h                       # first start may download ~16GB
+    restart: unless-stopped
